@@ -5,6 +5,7 @@ import inspect
 from typing import Any, Callable, Dict, List, Optional, Tuple, Awaitable
 from .models import Event, Handler, Middleware, MiddlewareEntry
 import re
+import concurrent.futures
 
 class EventBus:
     """
@@ -17,6 +18,20 @@ class EventBus:
         self._static_susbcribers_map: Dict[str, Event] = {}
         self._middlewares: List[MiddlewareEntry] = []
         self._lock = asyncio.Lock()
+        self._executor = concurrent.futures.ThreadPoolExecutor(max_workers=5)
+
+    def __del__(self):
+        self._executor.shutdown(cancel_futures=True)
+
+    @staticmethod
+    def _run_async_in_thread(coro: Awaitable): # NOVO MÉTODO ESTATICO
+        """Cria e executa um novo loop de eventos em uma thread."""
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        try:
+            loop.run_until_complete(coro)
+        finally:
+            loop.close()
 
     def use(self, middleware: Middleware, topics: list[str] = []) -> None:
         self._middlewares.append(MiddlewareEntry(middleware, topics))
@@ -136,7 +151,8 @@ class EventBus:
 
     def publish(self, topic: str, payload: Any = None, *, metadata: Optional[Dict[str, Any]] = None) -> None:
         """Publishes an event. All the associated listeners will be executed."""
-        asyncio.run(self.publish_async(topic, payload, metadata=metadata))
+        coro = self.publish_async(topic, payload, metadata=metadata)
+        self._executor.submit(EventBus._run_async_in_thread, coro)
     
     def list_subscribers(self) -> Dict[str, List[Tuple[str, int, bool, int]]]:
         return {t: [(h.identifier, h.priority, h.once, h.max_retries) for h in hs] for t, hs in self._subscribers.items()}

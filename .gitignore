@@ -1,3 +1,5 @@
 venv
 dist
 .pytest_cache
+docs/node_modules
+docs/docs/.vuepress
